@@ -2,6 +2,7 @@ from tqdm.notebook import tqdm
 import sys
 import djvu.decode
 import pysolr
+import re
 
 
 record_id = 1
@@ -33,12 +34,14 @@ def index_word(words_buffer, word_tuple, page_number, line_number, word_number):
             global record_id
             # TODO: don't use global variables!!
             # TODO: can I have integers here?
+            # TODO: 'file' - not a const, but a parameter
             word_dict = {
                 'id': record_id,
+                'file': 'Romanov.djvu',
                 'page': str(page_number),
                 'line': str(line_number),
                 'position': str(word_number),
-                'coordinates': ','.join(coordinates_list),
+                'coordinates': coordinates_list,
                 'word': word
             }
             record_id += 1
@@ -102,14 +105,8 @@ class Context(djvu.decode.Context):
 
             words_buffer = []
             index_page(words_buffer, page.text.sexpr, i)
-            docs = [
-                {'id': 1, 'name': 'document 1', 'text': u'Paul Verlaine'},
-                {'id': 2, 'name': 'document 2', 'text': u'Владимир Маякoвский'},
-                {'id': 3, 'name': 'document 3', 'text': u'test'},
-                {'id': 4, 'name': 'document 4', 'text': u'test'}
-            ]
             solr.add(words_buffer)
-            solr.add(docs)
+        solr.commit()
 
 
 def dump_text(djvu_path, text_file_path, pages=[]):
@@ -123,12 +120,13 @@ def dump_and_index_text(djvu_path, pages=[]):
     try:
         context.index_text(djvu_path, pages)
     except Exception as e:
-        raise Exception(e.args[0])
+        raise Exception(e.args)
 
 
 def clean_index():
     solr = pysolr.Solr(solr_url, timeout=10)
     solr.delete(q='*:*')
+    solr.commit()
 
 
 def find_word(word):
