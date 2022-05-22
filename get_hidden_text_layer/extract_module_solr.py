@@ -2,12 +2,6 @@ from tqdm.notebook import tqdm
 import sys
 import djvu.decode
 import pysolr
-import re
-
-
-record_id = 1
-solr_url = "http://localhost:8983/solr/Solr_sample"
-# TODO: remove it from here, make it an argument of the command line
 
 
 def print_text(sexpr, text_file, level=0):
@@ -24,7 +18,7 @@ def print_text(sexpr, text_file, level=0):
         text_file.write('"' + sexpr.value + '"' + "\n")
 
 
-def index_word(words_buffer, word_tuple, page_number, line_number, word_number):
+def _index_word(words_buffer, word_tuple, where_to_find):
     if isinstance(word_tuple, tuple):
         if len(word_tuple) == 0:
             return
@@ -33,38 +27,47 @@ def index_word(words_buffer, word_tuple, page_number, line_number, word_number):
             word = word_tuple[5]
             global record_id
             # TODO: don't use global variables!!
-            # TODO: can I have integers here?
-            # TODO: 'file' - not a const, but a parameter
             word_dict = {
-                'id': record_id,
-                'file': 'Romanov.djvu',
-                'page': str(page_number),
-                'line': str(line_number),
-                'position': str(word_number),
+                'id': f"{where_to_find['file']}-{where_to_find['id']}",
+                'file': where_to_find['file'],
+                'page': where_to_find['page'],
+                'line': where_to_find['line'],
+                'position': where_to_find['pos'],
                 'coordinates': coordinates_list,
                 'word': word
             }
-            record_id += 1
+            where_to_find['id'] += 1
 
             words_buffer.append(word_dict)
 
 
-def index_line(words_buffer, line_tuple, page_number, line_number):
+def _index_line(words_buffer, line_tuple, where_to_find):
     if isinstance(line_tuple, tuple):
         if len(line_tuple) == 0:
             return
         if line_tuple[0] == djvu.sexpr.Symbol('line'):
             for i, word_tuple in enumerate(line_tuple[5:]):
-                index_word(words_buffer, word_tuple, page_number, line_number, i)
+                where_to_find['pos'] = i
+                _index_word(words_buffer, word_tuple, where_to_find)
 
 
-def index_page(words_buffer, sexpr, page_number):
+def _index_page(words_buffer, sexpr, where_to_find):
     if isinstance(sexpr, djvu.sexpr.ListExpression):
         if len(sexpr) == 0:
             return
         if sexpr.value[0] == djvu.sexpr.Symbol('page'):
             for i, line_tuple in enumerate(sexpr.value[5:]):
-                index_line(words_buffer, line_tuple, page_number, i)
+                where_to_find['line'] = i
+                _index_line(words_buffer, line_tuple, where_to_find)
+
+
+def clean_index(solr_url, files=[]):
+    solr = pysolr.Solr(solr_url, timeout=10)
+    if len(files) == 0:
+        solr.delete(q='*:*')
+    for file in files:
+        solr.delete(q=f'file:"{file}"')
+    solr.commit()
 
 
 class Context(djvu.decode.Context):
@@ -87,13 +90,15 @@ class Context(djvu.decode.Context):
             print(i)
             print_text(page.text.sexpr, text_file)
 
-    def index_text(self, djvu_path, pages=[]):
+    def index_text(self, djvu_path, solr_url, pages=[]):
         try:
             document = self.new_document(djvu.decode.FileURI(djvu_path))
             solr = pysolr.Solr(solr_url, timeout=10)
         except djvu.decode.JobFailed:
             raise Exception("JobFailed: unable to create a 'document'")
 
+        where_to_find = {'file': djvu_path, 'page': 0, 'line': 0, 'pos': 0, 'id': 1}
+        clean_index(solr_url, [djvu_path])
         for i, page in enumerate(document.pages):
             try:
                 page.get_info(wait=True)
@@ -104,7 +109,8 @@ class Context(djvu.decode.Context):
                 continue
 
             words_buffer = []
-            index_page(words_buffer, page.text.sexpr, i)
+            where_to_find['page'] = i
+            _index_page(words_buffer, page.text.sexpr, where_to_find)
             solr.add(words_buffer)
         solr.commit()
 
@@ -115,24 +121,23 @@ def dump_text(djvu_path, text_file_path, pages=[]):
     context.process(djvu_path, text_file, pages)
 
 
-def dump_and_index_text(djvu_path, pages=[]):
+def dump_and_index_text(djvu_path, solr_url, pages=[]):
     context = Context()
     try:
-        context.index_text(djvu_path, pages)
+        context.index_text(djvu_path, solr_url, pages)
     except Exception as e:
         raise Exception(e.args)
 
 
-def clean_index():
+def find_word(word, solr_url, files=[], limit=1000000000):
     solr = pysolr.Solr(solr_url, timeout=10)
-    solr.delete(q='*:*')
-    solr.commit()
+    for file in files:
+        result = solr.search(q=f'word:"{word}"', fq=f'file:"{file}"', rows=limit)
+        for record in result:
+            print(record)
 
 
-def find_word(word):
+def check_index(solr_url, file):
     solr = pysolr.Solr(solr_url, timeout=10)
-    result = solr.search(q=f'word:"{word}"')
-
-    for record in result:
-        print(record)
-
+    result = solr.search(q=f'id:"{file}-1"')
+    return len(result) == 1
