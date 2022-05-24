@@ -2,6 +2,21 @@ import djvu.decode
 import pysolr
 
 
+def simple_rus_detect(word):
+    """
+    pseudo-detection ot the word's language
+    there exists a langdetect module, but it is not very fast.
+    And accuracy is not very important in this case.
+    @param word: word to 'detect' language
+    @return: True if the first letter is russian, False otherwise.
+    """
+    if len(word) == 0:
+        return False
+    if 1040 <= ord(word[0]) <= 1103 or ord(word[0]) in [1025, 1105]:
+        return True
+    return False
+
+
 def print_text(sexpr, text_file, level=0):
     """
     prints text from the DjVu text layer
@@ -35,6 +50,7 @@ def _index_word(words_buffer, word_tuple, where_to_find):
         if word_tuple[0] == djvu.sexpr.Symbol('word'):
             coordinates_list = [str(word_tuple[i]) for i in range(1, 5)]
             word = word_tuple[5]
+            word.strip("!?.,:;/'\"\\-+=*^%$#@()")
             word_dict = {
                 'id': f"{where_to_find['file']}-{where_to_find['id']}",
                 'file': where_to_find['file'],
@@ -42,7 +58,7 @@ def _index_word(words_buffer, word_tuple, where_to_find):
                 'line': where_to_find['line'],
                 'position': where_to_find['pos'],
                 'coordinates': coordinates_list,
-                'word': word
+                'word': word,
             }
             where_to_find['id'] += 1
 
@@ -141,7 +157,6 @@ class Context(djvu.decode.Context):
             try:
                 page.get_info(wait=True)
             except djvu.decode.JobFailed:
-                # raise Exception("JobFailed: unable to get page information")
                 continue
 
             if i not in pages and pages != []:
@@ -168,19 +183,44 @@ def dump_and_index_text(djvu_path, solr_url, pages=[]):
         raise Exception(e.args)
 
 
-def find_word(word, solr_url, files=[], limit=1000000000):
+def print_result(solr_url, query, query2=None, limit=1000000):
+    solr = pysolr.Solr(solr_url, timeout=10)
+    if query2 is None:
+        result = solr.search(q=f'word:{query}', rows=limit)
+    else:
+        result = solr.search(q=f'word:{query}', fq=f'file:{query2}', rows=limit)
+    for record in result:
+        print(record)
+
+
+def print_result(solr_url, query, query2=None, limit=1000000):
+    solr = pysolr.Solr(solr_url, timeout=10)
+    if query2 is None:
+        result = solr.search(q=query, rows=limit)
+    else:
+        result = solr.search(q=query, fq=query2, rows=limit)
+    for record in result:
+        print(record)
+
+
+def find_word(word, solr_url, accuracy=False, files=[], limit=1000000):
     """
     finds 'limit' entries of the word given
+    @param accuracy: set it True if you need only exact matches
     @param word: word to find
     @param solr_url: url to connect to the Solr engine
     @param files: list of files to search into
     @param limit: maximum length of result, default 1e9
     """
-    solr = pysolr.Solr(solr_url, timeout=10)
+
+    if len(files) == 0:
+        print_result(solr_url, f"word:*{word}*", limit=limit)
+        if not accuracy:
+            print_result(solr_url, f"word:{word}~", limit=limit)
     for file in files:
-        result = solr.search(q=f'word:"{word}"', fq=f'file:"{file}"', rows=limit)
-        for record in result:
-            print(record)
+        print_result(solr_url, f"word:*{word}*", query2=f"file:{file}")
+        if not accuracy:
+            print_result(solr_url, f"word:{word}~", query2=f"file:{file}")
 
 
 def check_index(solr_url, file):
