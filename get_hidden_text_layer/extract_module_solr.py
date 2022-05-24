@@ -2,21 +2,6 @@ import djvu.decode
 import pysolr
 
 
-def simple_rus_detect(word):
-    """
-    pseudo-detection ot the word's language
-    there exists a langdetect module, but it is not very fast.
-    And accuracy is not very important in this case.
-    @param word: word to 'detect' language
-    @return: True if the first letter is russian, False otherwise.
-    """
-    if len(word) == 0:
-        return False
-    if 1040 <= ord(word[0]) <= 1103 or ord(word[0]) in [1025, 1105]:
-        return True
-    return False
-
-
 def print_text(sexpr, text_file, level=0):
     """
     prints text from the DjVu text layer
@@ -50,7 +35,7 @@ def _index_word(words_buffer, word_tuple, where_to_find):
         if word_tuple[0] == djvu.sexpr.Symbol('word'):
             coordinates_list = [str(word_tuple[i]) for i in range(1, 5)]
             word = word_tuple[5]
-            word.strip("!?.,:;/'\"\\-+=*^%$#@()")
+            word = word.strip(",!?.:;/'\"\\-+=*^%$#@() ")
             word_dict = {
                 'id': f"{where_to_find['file']}-{where_to_find['id']}",
                 'file': where_to_find['file'],
@@ -59,8 +44,11 @@ def _index_word(words_buffer, word_tuple, where_to_find):
                 'position': where_to_find['pos'],
                 'coordinates': coordinates_list,
                 'word': word,
+                'word-1': where_to_find['word1'],
+                'word-2': where_to_find['word2']
             }
             where_to_find['id'] += 1
+            where_to_find['word2'], where_to_find['word1'] = where_to_find['word1'], word
 
             words_buffer.append(word_dict)
 
@@ -151,7 +139,7 @@ class Context(djvu.decode.Context):
 
         solr = pysolr.Solr(solr_url, timeout=10)
 
-        where_to_find = {'file': djvu_path, 'page': 0, 'line': 0, 'pos': 0, 'id': 1}
+        where_to_find = {'word1': "", 'word2': "", 'file': djvu_path, 'page': 0, 'line': 0, 'pos': 0, 'id': 1}
         clean_index(solr_url, [djvu_path])
         for i, page in enumerate(document.pages):
             try:
@@ -183,44 +171,64 @@ def dump_and_index_text(djvu_path, solr_url, pages=[]):
         raise Exception(e.args)
 
 
-def print_result(solr_url, query, query2=None, limit=1000000):
-    solr = pysolr.Solr(solr_url, timeout=10)
-    if query2 is None:
-        result = solr.search(q=f'word:{query}', rows=limit)
-    else:
-        result = solr.search(q=f'word:{query}', fq=f'file:{query2}', rows=limit)
+def _print_result(result, n=1):
     for record in result:
-        print(record)
+        s = record['word'][0]
+        for i in range(1, n):
+            s = record[f"word-{i}"][0] + ' ' + s
+        print(f"FOUND {s} in {record['file'][0]}: page {record['page'][0]}, line {record['line'][0]}")
 
 
-def print_result(solr_url, query, query2=None, limit=1000000):
-    solr = pysolr.Solr(solr_url, timeout=10)
-    if query2 is None:
-        result = solr.search(q=query, rows=limit)
-    else:
-        result = solr.search(q=query, fq=query2, rows=limit)
-    for record in result:
-        print(record)
+def string_to_queries(s):
+    """
+    parses short word collocations into words
+    @param s: word collocation
+    @return: last word of the collocation and the filter query
+    """
+    words = [w.strip(",!?.:;/'\"\\-+=*^%$#@() ") for w in s.split()]
+    if len(words) > 3:
+        print("Too long query")
+        return None, None
+
+    filter_query = []
+    for i in range(1, len(words)):
+        filter_query.append(f"word-{i}:{words[-1 - i]}~")
+
+    return words[-1], filter_query
 
 
-def find_word(word, solr_url, accuracy=False, files=[], limit=1000000):
+def find_word(word_line, solr_url, accuracy=False, files=[""], limit=10000):
     """
     finds 'limit' entries of the word given
     @param accuracy: set it True if you need only exact matches
-    @param word: word to find
+    @param word_line: word to find
     @param solr_url: url to connect to the Solr engine
     @param files: list of files to search into
     @param limit: maximum length of result, default 1e9
+    @return: list of search results
     """
+    solr = pysolr.Solr(solr_url, timeout=10)
 
-    if len(files) == 0:
-        print_result(solr_url, f"word:*{word}*", limit=limit)
-        if not accuracy:
-            print_result(solr_url, f"word:{word}~", limit=limit)
+    word, filter_query = string_to_queries(word_line)
+    if word is None:
+        return []
+
+    result = []
     for file in files:
-        print_result(solr_url, f"word:*{word}*", query2=f"file:{file}")
+        # if file is not clarified, we have to search through the whole index
+        if len(file) > 0:
+            filter_query.append(f"file:{file}")
+
+        if accuracy:
+            result.extend(list(solr.search(q=f"word:*{word}*", fq=filter_query, rows=limit)))
         if not accuracy:
-            print_result(solr_url, f"word:{word}~", query2=f"file:{file}")
+            result.extend(list(solr.search(q=f"word:{word}~|*{word}*", fq=filter_query, rows=limit)))
+
+        if len(file) > 0:
+            filter_query.pop()
+
+    _print_result(result, n=len(word_line.split()))
+    return result
 
 
 def check_index(solr_url, file):

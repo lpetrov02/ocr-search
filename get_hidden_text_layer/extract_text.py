@@ -34,7 +34,7 @@ try:
             extract.clean_index(solr_url, [options.djvu_path])
 
     if options.action == 'find':
-        extract.find_word(options.word, solr_url, [options.djvu_path])
+        extract.find_word(options.word, solr_url, files=[options.djvu_path])
 
 except Exception as e:
     print(e.args)
