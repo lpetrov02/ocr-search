@@ -48,13 +48,12 @@ def _index_word(words_buffer, word_tuple, where_to_find):
                 'coordinates': coordinates_list,
                 'word': word,
                 'word-1': where_to_find['word1'],  # previous word
-                'word-2': where_to_find['word2'],  # pre-previous word
-                'word-2-page-line': where_to_find['word-2-page-line']  # page and line of the pre-previous word
+                'word-1-page-line-pos': where_to_find['word-1-page-line-pos']  # page and line of the previous word
             }
             where_to_find['id'] += 1
-            where_to_find['word2'], where_to_find['word1'] = where_to_find['word1'], word
-            where_to_find['word-2-page-line'] = where_to_find['word-1-page-line']
-            where_to_find['word-1-page-line'] = f"{where_to_find['page']}_{where_to_find['line']}"
+            where_to_find['word1'] = word
+            where_to_find['word-1-page-line-pos'] = \
+                f"{where_to_find['page']}_{where_to_find['line']}_{where_to_find['pos']}"
 
             words_buffer.append(word_dict)
 
@@ -146,8 +145,8 @@ class Context(djvu.decode.Context):
 
         solr = pysolr.Solr(solr_url, timeout=10)
 
-        where_to_find = {'word-2-page-line': " ", 'word-1-page-line': " ", 'word1': " ", 'word2': " ",
-                         'file': djvu_path, 'page': 0, 'line': 0, 'pos': 0, 'id': 1}
+        where_to_find = {'word-1-page-line-pos': " ", 'word1': " ", 'file': djvu_path,
+                         'page': 0, 'line': 0, 'pos': 0, 'id': 1}
         clean_index(solr_url, [djvu_path])
         for i, page in enumerate(document.pages):
             try:
@@ -179,13 +178,13 @@ def dump_and_index_text(djvu_path, solr_url, pages=[]):
         raise Exception(e.args)
 
 
-def print_result(result):
-    for record in result:
-        s = record['word'][0] + "..."
-        for i in range(1, 3):
-            s = record[f"word-{i}"][0] + ' ' + s
-        s = "..." + s
-        print(f"FOUND {s} near {record['file'][0]}: page {record['page'][0]}, line {record['line'][0]}")
+def print_result(begin_result, end_result):
+    for i in range(len(begin_result)):
+        s = begin_result[i]['word'][0]
+        if begin_result[i]['id'] != end_result[i]['id']:
+            s += " ... " + end_result[i]['word'][0]
+        print(f"FOUND \" {s} \" near {begin_result[i]['file'][0]}: page {begin_result[i]['page'][0]},"
+              f" line {begin_result[i]['line'][0]}, word number {begin_result[i]['position'][0]}")
 
 
 def list_to_queries(words):
@@ -193,16 +192,15 @@ def list_to_queries(words):
     @param words: list of words
     @return: word - the last word of the list,
              query - a solr query made of the second and the third (from the end) words of the list
-             (if the list is long enough),
-             words_left - list of all other words
+             (if the list is long enough)
+             words_left
     """
 
     filter_query = []
-    for i in range(1, min(3, len(words))):
-        filter_query.append(f"word-{i}:{words[-1 - i]}~")
-    words_left = words[: -2]
+    if len(words) > 1:
+        filter_query.append(f"word-1:{words[-2]}~")
 
-    return words[-1], filter_query, words_left
+    return words[-1], filter_query, words[:-1]
 
 
 def find_word(word_line, solr_url, accuracy=False, files=[""], limit=10000):
@@ -223,34 +221,47 @@ def find_word(word_line, solr_url, accuracy=False, files=[""], limit=10000):
 
     solr = pysolr.Solr(solr_url, timeout=10)
 
-    result = _find_word(word, filter_query, words_left, solr,
-                        accuracy=accuracy, files=files, limit=limit)
+    begin_result, end_result = _find_word(word, filter_query, words_left, solr,
+                                          accuracy=accuracy, files=files, limit=limit)
 
-    return result
+    if len(words) > 1:
+        upd_begin_result = []
+        for res in begin_result:
+            page, line, pos = res['word-1-page-line-pos'][0].split('_')
+            filter_query_ = [f"page:{page}", f"line:{line}", f"position:{pos}", f"file:{res['file'][0]}"]
+            query_ = f"word:{res['word-1'][0]}~|*{res['word-1'][0]}*"
+            new_res = solr.search(q=query_, fq=filter_query_)
+            upd_begin_result.extend(list(new_res))
+
+        begin_result = upd_begin_result
+
+    return begin_result, end_result
 
 
-def _recursive_search(solr, result, words_left, accuracy):
+def _recursive_search(solr, result, words, accuracy):
     """
     make a recursive search to find long collocations (> 3 words)
     @param solr: solr search engine object
     @param result: searching result for the tail of collocation
-    @param words_left: words to search
+    @param words: words to search
     @param accuracy:
     @return: full searching result
     """
     full_result = []
-    for res in result:
-        page, line = res['word-2-page-line'][0].split('_')
-        add_query = [f"page:{page}", f"line:{line}"]
-        word_, filter_query_, words_left_ = list_to_queries(words_left)
-        full_result.extend(
-            _find_word(
-                word_, filter_query_, words_left_, solr,
+    good_results_indexes = []
+    for i, res in enumerate(result):
+        page, line, position = res['word-1-page-line-pos'][0].split('_')
+        add_query = [f"page:{page}", f"line:{line}", f"position:{position}"]
+        word_, filter_query_, words_left = list_to_queries(words)
+        res_, _ = _find_word(
+                word_, filter_query_, words_left, solr,
                 accuracy=accuracy, files=[res['file'][0]],
                 additional_query=add_query
-            )
-        )
-    return full_result
+                )
+        full_result.extend(res_)
+        if len(res_) > 0:
+            good_results_indexes.append(i)
+    return full_result, good_results_indexes
 
 
 def _find_word(word, filter_query, words_left, solr, accuracy=False, files=[""], limit=10000, additional_query=[]):
@@ -267,7 +278,6 @@ def _find_word(word, filter_query, words_left, solr, accuracy=False, files=[""],
 
     result = []
     for file in files:
-        # if file is not clarified, we have to search through the whole index
         if len(file) > 0:
             filter_query.append(f"file:{file}")
 
@@ -278,11 +288,15 @@ def _find_word(word, filter_query, words_left, solr, accuracy=False, files=[""],
 
         if len(file) > 0:
             filter_query.pop()
+        else:
+            break
 
+    full_result = result.copy()
+    upd_result = result.copy()
     if len(words_left) > 1:
-        result = _recursive_search(solr, result, words_left, accuracy)
-
-    return result
+        full_result, indexes = _recursive_search(solr, result, words_left, accuracy)
+        upd_result = [result[i] for i in indexes]
+    return full_result, upd_result
 
 
 def check_index(solr_url, file):
@@ -294,4 +308,6 @@ def check_index(solr_url, file):
     solr = pysolr.Solr(solr_url, timeout=10)
     result = solr.search(q=f'id:"{file}-1"')
     return len(result) == 1
+
+
 
