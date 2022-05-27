@@ -28,13 +28,11 @@ try:
         extract.dump_text(options.djvu_path, "textfile.txt")
 
     if options.action == 'clean':
-        if len(options.djvu_path) == 0:
-            extract.clean_index(solr_url)
-        else:
-            extract.clean_index(solr_url, [options.djvu_path])
+        extract.clean_index(solr_url, [options.djvu_path])
 
     if options.action == 'find':
-        extract.find_word(options.word, solr_url, [options.djvu_path])
+        res = extract.find_word(options.word, solr_url, files=[options.djvu_path])
+        extract.print_result(res)
 
 except Exception as e:
     print(e.args)
