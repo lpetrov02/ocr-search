@@ -19,22 +19,17 @@ parser.add_option('-w', '--word', default="",    help='word to find', action='st
 
 (options, args) = parser.parse_args()
 
-try:
-    if options.action == 'index':
-        if not extract.check_index(solr_url, options.djvu_path) or options.reindex:
-            extract.dump_and_index_text(options.djvu_path, solr_url)
+if options.action == 'index':
+    if not extract.check_index(solr_url, options.djvu_path) or options.reindex:
+        extract.dump_and_index_text(options.djvu_path, solr_url)
 
-    if options.action == 'print':
-        extract.dump_text(options.djvu_path, "textfile.txt")
+if options.action == 'print':
+    extract.dump_text(options.djvu_path, "textfile.txt")
 
-    if options.action == 'clean':
-        extract.clean_index(solr_url, [options.djvu_path])
+if options.action == 'clean':
+    extract.clean_index(solr_url, [options.djvu_path])
 
-    if options.action == 'find':
-        res_begin, res_end = extract.find_word(options.word, solr_url, files=[options.djvu_path])
-        extract.print_result(res_begin, res_end)
-
-except Exception as e:
-    print(e.args)
-    sys.exit(-1)
+if options.action == 'find':
+    searching_result = extract.find_word(options.word, solr_url, files=[options.djvu_path])
+    extract.print_result(searching_result)
 
