@@ -37,6 +37,9 @@ if options.action == 'find':
 if options.action == 'info':
     index_info = indexer.get_index_info()
     for file_info in index_info:
-        print(file_info[1], ":", file_info[2], "words indexed")
+        if len(file_info) != 4:
+            print("problems with database")
+        else:
+            print(file_info[1], ":", file_info[2], "words indexed,", file_info[3], "pages skipped")
 
 

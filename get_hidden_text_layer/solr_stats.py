@@ -17,17 +17,24 @@ class SolrStats:
         self.index_cursor.execute(
             "CREATE TABLE IF NOT EXISTS Files ("
             "id INT AUTO_INCREMENT PRIMARY KEY, "
-            "file VARCHAR(255), recordings INT)")
+            "file VARCHAR(255), recordings INT,"
+            "pages_skipped INT)")
 
     def add_words(self, file_name, n_words):
         self.index_cursor.execute(f"SELECT recordings FROM Files WHERE file='{file_name}'")
         recordings_number = self.index_cursor.fetchall()
 
-        sql_request = "INSERT INTO Files (file, recordings) VALUES(%s, %s)"
         if len(recordings_number) == 0:
+            sql_request = "INSERT INTO Files (file, recordings) VALUES(%s, %s)"
             self.index_cursor.execute(sql_request, (file_name, n_words))
         elif len(recordings_number) == 1:
-            self.index_cursor.execute(sql_request, (file_name, recordings_number[0] + n_words))
+            sql_request = f"UPDATE Files SET recordings={recordings_number[0] + n_words} WHERE file='{file_name}'"
+            self.index_cursor.execute(sql_request)
+        self.index_db.commit()
+
+    def add_skipped_pages(self, file_name, n_pages):
+        sql_request = f"UPDATE Files SET pages_skipped={n_pages} WHERE file='{file_name}'"
+        self.index_cursor.execute(sql_request)
         self.index_db.commit()
 
     def delete_from_index(self, files):
@@ -54,3 +61,4 @@ class SolrStats:
     def close(self):
         self.index_db.close()
         self.db.close()
+

@@ -38,31 +38,34 @@ def _index_word(words_buffer, word_tuple, word_info):
     @param word_tuple: tuple with info about the word
     @param word_info: dict with current file, page, line, position of the word in the line and word id
     """
-    if isinstance(word_tuple, tuple):
-        if len(word_tuple) == 0:
-            return
-        if word_tuple[0] == djvu.sexpr.Symbol('word'):
-            coordinates_list = "_".join([str(word_tuple[i]) for i in range(1, 5)])
-            word = word_tuple[5]
-            word = word.strip(",!?.:;/'\"\\-+=*^%$#@() ")
-            if word == "":
+    try:
+        if isinstance(word_tuple, tuple):
+            if len(word_tuple) == 0:
                 return
+            if word_tuple[0] == djvu.sexpr.Symbol('word'):
+                coordinates_list = "_".join([str(word_tuple[i]) for i in range(1, 5)])
+                word = word_tuple[5]
+                word = word.strip(",!?.:;/'\"\\-+=*^%$#@() ")
+                if word == "":
+                    return
 
-            page_line_pos = '_'.join([str(word_info[key]) for key in ['page', 'line', 'pos']])
-            word_dict = {
-                'id': f"{word_info['file']}-{word_info['id']}",
-                'file': word_info['file'],
-                'page-line-pos': page_line_pos,
-                'coords': coordinates_list,
-                'word': word,
-                'word-1': word_info['word1'],  # previous word
-                'word-1-page-line-pos': word_info['word-1-page-line-pos']  # page and line of the previous word
-            }
-            word_info['id'] += 1
-            word_info['word1'] = word
-            word_info['word-1-page-line-pos'] = page_line_pos
+                page_line_pos = '_'.join([str(word_info[key]) for key in ['page', 'line', 'pos']])
+                word_dict = {
+                    'id': f"{word_info['file']}-{word_info['id']}",
+                    'file': word_info['file'],
+                    'page-line-pos': page_line_pos,
+                    'coords': coordinates_list,
+                    'word': word,
+                    'word-1': word_info['word1'],  # previous word
+                    'word-1-page-line-pos': word_info['word-1-page-line-pos']  # page and line of the previous word
+                }
+                word_info['id'] += 1
+                word_info['word1'] = word
+                word_info['word-1-page-line-pos'] = page_line_pos
 
-            words_buffer.append(word_dict)
+                words_buffer.append(word_dict)
+    except UnicodeDecodeError:
+        return
 
 
 def add_single_word(solr_url, word, file_name, coordinates=[], plp=" ", word_1="", plp_1=" "):
@@ -104,29 +107,36 @@ def _index_line(words_buffer, line_tuple, word_info):
     @param line_tuple: tuple with information about the line
     @param word_info: dict with current file, page, line and word id
     """
-    if isinstance(line_tuple, tuple):
-        if len(line_tuple) == 0:
-            return
-        if line_tuple[0] == djvu.sexpr.Symbol('line'):
-            for i, word_tuple in enumerate(line_tuple[5:]):
-                word_info['pos'] = i
-                _index_word(words_buffer, word_tuple, word_info)
+    try:
+        if isinstance(line_tuple, tuple):
+            if len(line_tuple) == 0:
+                return
+            if line_tuple[0] == djvu.sexpr.Symbol('line'):
+                for i, word_tuple in enumerate(line_tuple[5:]):
+                    word_info['pos'] = i
+                    _index_word(words_buffer, word_tuple, word_info)
+    except UnicodeDecodeError:
+        return
 
 
-def _index_page(words_buffer, sexpr, word_info):
+def _index_page(words_buffer, pages_skipped, sexpr, word_info):
     """
     cuts the page into lines
     @param words_buffer: list of dicts with information about words' entries
     @param sexpr: sexpr which contains information about the page
     @param word_info: dict with current file, page and word id
     """
-    if isinstance(sexpr, djvu.sexpr.ListExpression):
-        if len(sexpr) == 0:
-            return
-        if sexpr.value[0] == djvu.sexpr.Symbol('page'):
-            for i, line_tuple in enumerate(sexpr.value[5:]):
-                word_info['line'] = i
-                _index_line(words_buffer, line_tuple, word_info)
+    try:
+        if isinstance(sexpr, djvu.sexpr.ListExpression):
+            if len(sexpr) == 0:
+                return
+            if sexpr.value[0] == djvu.sexpr.Symbol('page'):
+                for i, line_tuple in enumerate(sexpr.value[5:]):
+                    word_info['line'] = i
+                    _index_line(words_buffer, line_tuple, word_info)
+    except UnicodeDecodeError:
+        pages_skipped.append(word_info['page'])
+        return
 
 
 def clean_index(solr_url, files=[""]):
@@ -196,6 +206,7 @@ class Context(djvu.decode.Context):
         clean_index(solr_url, [djvu_path])
 
         words_buffer = []
+        pages_skipped = []
         total_recordings = 0
         for i, page in tqdm(enumerate(document.pages), desc='indexing', unit=' pages',
                             disable=not progress_bar, total=len(document.pages)):
@@ -209,11 +220,13 @@ class Context(djvu.decode.Context):
 
             words_buffer.clear()
             word_info['page'] = i
-            _index_page(words_buffer, page.text.sexpr, word_info)
+            _index_page(words_buffer, pages_skipped, page.text.sexpr, word_info)
             solr.add(words_buffer)
             total_recordings += len(words_buffer)
+
         solr.commit()
         stats.add_words(djvu_path, total_recordings)
+        stats.add_skipped_pages(djvu_path, len(pages_skipped))
         stats.close()
 
         return total_recordings, "Indexing finished successfully"
