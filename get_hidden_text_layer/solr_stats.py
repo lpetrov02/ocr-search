@@ -2,7 +2,7 @@ import mysql.connector
 import MySQLdb.cursors
 
 
-sql_password = "khinkali"
+sql_password = "123456"
 
 
 class SolrStats:
@@ -50,9 +50,6 @@ class SolrStats:
         self.index_cursor.execute("SELECT * FROM Files WHERE recordings > 0")
         res = self.index_cursor.fetchall()
         return res
-
-    def delete_all(self):
-
 
     def close(self):
         self.index_db.close()

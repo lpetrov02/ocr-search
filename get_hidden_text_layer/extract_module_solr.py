@@ -186,7 +186,7 @@ class Context(djvu.decode.Context):
         try:
             document = self.new_document(djvu.decode.FileURI(djvu_path))
         except djvu.decode.JobFailed:
-            return -1
+            return -1, "Cannot open the djvu file"
 
         solr = pysolr.Solr(solr_url, timeout=10)
         stats = solr_stats.SolrStats()
@@ -216,7 +216,7 @@ class Context(djvu.decode.Context):
         stats.add_words(djvu_path, total_recordings)
         stats.close()
 
-        return total_recordings
+        return total_recordings, "Indexing finished successfully"
 
 
 def dump_text(djvu_path, text_file_path, pages=[]):
@@ -228,9 +228,11 @@ def dump_text(djvu_path, text_file_path, pages=[]):
 def dump_and_index_text(djvu_path, solr_url, pages=[], print_info=False, progress_bar=False, reindex=False):
     context = Context()
     if not check_index(solr_url, djvu_path) or reindex:
-        recordings_added = context.index_text(djvu_path, solr_url, pages, progress_bar=progress_bar)
+        recordings_added, message = context.index_text(djvu_path, solr_url, pages, progress_bar=progress_bar)
         if print_info:
-            print("Indexing finished.", recordings_added, "recordings added")
+            print(message)
+            if recordings_added != -1:
+                print(recordings_added, "recordings added")
     elif print_info:
         print("File already indexed. Rerun with reindex=True if you want to reindex it.")
 
