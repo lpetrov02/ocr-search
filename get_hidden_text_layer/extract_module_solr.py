@@ -65,7 +65,7 @@ def _index_word(words_buffer, word_tuple, word_info):
             words_buffer.append(word_dict)
 
 
-def add_single_word(solr_url, word, file_name, coordinates=[], plp="__", word_1="", plp_1="__"):
+def add_single_word(solr_url, word, file_name, coordinates=[], plp=" ", word_1="", plp_1=" "):
     """
     adds a single word to the index
     @param solr_url:
@@ -235,136 +235,6 @@ def dump_and_index_text(djvu_path, solr_url, pages=[], print_info=False, progres
                 print(recordings_added, "recordings added")
     elif print_info:
         print("File already indexed. Rerun with reindex=True if you want to reindex it.")
-
-
-def print_result(searching_result):
-    for res in searching_result:
-        s = res[0]['word'][0]
-        if res[0]['id'] != res[1]['id']:
-            s += " ... " + res[1]['word'][0]
-        page, line, pos = res[0]['page-line-pos'][0].split('_')
-        print(f"FOUND \" {s} \" near {res[0]['file'][0]}: page {page},"
-              f" line {line}, word number {pos}")
-
-
-def list_to_queries(words, accuracy=False):
-    """
-    takes a list of words and returns the last word of this list, the filter query to search for this word and bites
-    the last word off the list
-    @param accuracy: set it True if you need only exact matches
-    @param words: list of words
-    @return: word - the last word of the list,
-             query - a solr query made of the second and the third (from the end) words of the list
-             (if the list is long enough)
-    """
-
-    filter_query = []
-    if len(words) > 1:
-        if accuracy:
-            filter_query.append(f"word-1:{words[-2]}")
-        else:
-            filter_query.append(f"word-1:{words[-2]}~|*{words[-2]}*")
-    word = words.pop()
-
-    return word, filter_query
-
-
-def find_word(word_line, solr_url, accuracy=False, files=[""], limit=10000):
-    """
-    finds entries of the word or collocation given
-    @param accuracy: set it True if you need only exact matches
-    @param word_line: words to find
-    @param solr_url: url to connect to the Solr engine
-    @param files: list of files to search into
-    @param limit: maximum length of result, default 1e4
-    @return: list of search results
-    """
-
-    words = [w.strip(",!?.:;/'\"\\-+=*^%$#@() ") for w in word_line.split()]
-    word, filter_query = list_to_queries(words, accuracy)  # words -> words[:-1]
-    if word is None:
-        return []
-
-    solr = pysolr.Solr(solr_url, timeout=10)
-
-    begin_result, end_result = _find_word(word, filter_query, words, solr,
-                                          accuracy=accuracy, files=files, limit=limit)
-
-    # if we search not for a single word but for a collocation, we would prefer (I believe)
-    # to get information about the first word of the entry, not about the second!
-    if len(words) > 0:
-        upd_begin_result = []
-        for res in begin_result:
-            filter_query_ = [f"page-line-pos:{res['word-1-page-line-pos'][0]}", f"file:{res['file'][0]}"]
-            query_ = f"word:{res['word-1'][0]}~|*{res['word-1'][0]}*"
-            new_res = solr.search(q=query_, fq=filter_query_)
-            upd_begin_result.extend(list(new_res))
-
-        begin_result = upd_begin_result
-
-    return list(zip(begin_result, end_result))
-
-
-def _recursive_search(solr, result, words, accuracy):
-    """
-    make a recursive search to find long collocations (> 2 words)
-    @param solr: solr search engine object
-    @param result: searching result for the tail of collocation
-    @param words: words to search
-    @param accuracy:
-    @return: full searching result
-    """
-    full_result = []
-    good_results = []
-    word_, filter_query_ = list_to_queries(words, accuracy)  # words -> words[:-1]
-    for i, res in enumerate(result):
-        add_query = [f"page-line-pos:{res['word-1-page-line-pos'][0]}"]
-        res_, _ = _find_word(
-                word_, filter_query_, words, solr,
-                accuracy=accuracy, files=[res['file'][0]],
-                additional_query=add_query
-                )  # inside this func filter_query_ is extended with 1-element add_query
-        filter_query_.pop()
-        if len(res_) > 0:
-            full_result.extend(res_)
-            good_results.append(res)
-    words.append(word_)
-    return full_result, good_results
-
-
-def _find_word(word, filter_query, words_left, solr, accuracy=False, files=[""], limit=10000, additional_query=[]):
-    """
-    finds 'limit' entries of the word given
-    @param accuracy: set it True if you need only exact matches
-    @param word: word to find
-    @param solr: Solr engine
-    @param files: list of files to search into
-    @param limit: maximum length of result, default 1e4
-    @return: list of search results
-    """
-    filter_query.extend(additional_query)
-
-    result = []
-    for file in files:
-        if len(file) > 0:
-            filter_query.append(f"file:{file}")
-
-        if accuracy:
-            result.extend(list(solr.search(q=f"word:{word}*", fq=filter_query, rows=limit)))
-        if not accuracy:
-            result.extend(list(solr.search(q=f"word:{word}~|*{word}*", fq=filter_query, rows=limit)))
-
-        if len(file) > 0:
-            filter_query.pop()
-        else:
-            break
-
-    end_result = result.copy()
-    begin_result = result.copy()
-    if len(words_left) > 1:
-        begin_result, end_result = _recursive_search(solr, result, words_left, accuracy)
-
-    return begin_result, end_result
 
 
 def check_index(solr_url, file):

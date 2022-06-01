@@ -2,7 +2,8 @@
 
 from optparse import OptionParser
 
-import extract_module_solr as extract
+import extract_module_solr as indexer
+import solr_search as searcher
 
 
 # your solr_url:
@@ -20,17 +21,22 @@ parser.add_option('-w', '--word', default="",    help='word to find', action='st
 (options, args) = parser.parse_args()
 
 if options.action == 'index':
-    extract.dump_and_index_text(options.djvu_path, solr_url, print_info=True,
+    indexer.dump_and_index_text(options.djvu_path, solr_url, print_info=True,
                                 progress_bar=options.pb, reindex=options.reindex)
 
 if options.action == 'print':
-    extract.dump_text(options.djvu_path, "textfile.txt")
+    indexer.dump_text(options.djvu_path, "textfile.txt")
 
 if options.action == 'clean':
-    extract.clean_index(solr_url, [options.djvu_path])
+    indexer.clean_index(solr_url, [options.djvu_path])
 
 if options.action == 'find':
-    searching_result = extract.find_word(options.word, solr_url, files=[options.djvu_path], accuracy=options.accuracy)
-    extract.print_result(searching_result)
+    searching_result = searcher.find_word(options.word, solr_url, files=[options.djvu_path], accuracy=options.accuracy)
+    searcher.print_result(searching_result)
+
+if options.action == 'info':
+    index_info = indexer.get_index_info()
+    for file_info in index_info:
+        print(file_info[1], ":", file_info[2], "words indexed")
 
 

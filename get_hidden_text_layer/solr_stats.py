@@ -2,7 +2,7 @@ import mysql.connector
 import MySQLdb.cursors
 
 
-sql_password = "123456"
+sql_password = "khinkali"
 
 
 class SolrStats:
