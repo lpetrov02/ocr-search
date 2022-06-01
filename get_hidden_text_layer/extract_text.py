@@ -1,6 +1,5 @@
 #! /usr/bin/env python
 
-
 from optparse import OptionParser
 
 import extract_module_solr as extract
@@ -33,4 +32,5 @@ if options.action == 'clean':
 if options.action == 'find':
     searching_result = extract.find_word(options.word, solr_url, files=[options.djvu_path], accuracy=options.accuracy)
     extract.print_result(searching_result)
+
 

@@ -1,6 +1,14 @@
 import djvu.decode
 import pysolr
 from tqdm import tqdm
+import solr_stats
+
+
+def get_index_info():
+    stats = solr_stats.SolrStats()
+    res = stats.get_indexed_files()
+    stats.close()
+    return res
 
 
 def print_text(sexpr, text_file, level=0):
@@ -57,6 +65,38 @@ def _index_word(words_buffer, word_tuple, word_info):
             words_buffer.append(word_dict)
 
 
+def add_single_word(solr_url, word, file_name, coordinates=[], plp="__", word_1="", plp_1="__"):
+    """
+    adds a single word to the index
+    @param solr_url:
+    @param word:
+    @param file_name:
+    @param coordinates:
+    @param plp: str '<page>_<line>_<position>' of the word
+    @param word_1: previous word
+    @param plp_1: str '<page>_<line>_<position>' of the previous word
+    @return:
+    """
+    solr = pysolr.Solr(solr_url, timeout=10)
+    stats = solr_stats.SolrStats()
+
+    new_word_id = stats.get_number_of_recordings(file_name)
+    word_dict = {
+        'id': f"{file_name}-{new_word_id}",
+        'file': file_name,
+        'page-line-pos': plp,
+        'coords': coordinates,
+        'word': word,
+        'word-1': word_1,  # previous word
+        'word-1-page-line-pos': plp_1  # page and line of the previous word
+    }
+
+    solr.add(word_dict)
+    solr.commit()
+    stats.add_words(1)
+    stats.close()
+
+
 def _index_line(words_buffer, line_tuple, word_info):
     """
     cuts line into words
@@ -89,18 +129,22 @@ def _index_page(words_buffer, sexpr, word_info):
                 _index_line(words_buffer, line_tuple, word_info)
 
 
-def clean_index(solr_url, files=[]):
+def clean_index(solr_url, files=[""]):
     """
     cleans index
     @param solr_url: url to connect to the Solr engine
     @param files: list of file to delete from index. "" - means cleaning the whole index.
     """
     solr = pysolr.Solr(solr_url, timeout=10)
+    stats = solr_stats.SolrStats()
+
     for file in files:
         if len(file) == 0:
             solr.delete(q='*:*')
         else:
             solr.delete(q=f'file:"{file}"')
+
+    stats.delete_from_index(files)
     solr.commit()
 
 
@@ -145,9 +189,10 @@ class Context(djvu.decode.Context):
             return -1
 
         solr = pysolr.Solr(solr_url, timeout=10)
+        stats = solr_stats.SolrStats()
 
         word_info = {'word-1-page-line-pos': " ", 'word1': " ", 'file': djvu_path,
-                     'page': 0, 'line': 0, 'pos': 0, 'id': 1}
+                     'page': 0, 'line': 0, 'pos': 0, 'id': 0}
         clean_index(solr_url, [djvu_path])
 
         words_buffer = []
@@ -168,6 +213,8 @@ class Context(djvu.decode.Context):
             solr.add(words_buffer)
             total_recordings += len(words_buffer)
         solr.commit()
+        stats.add_words(djvu_path, total_recordings)
+        stats.close()
 
         return total_recordings
 
@@ -327,4 +374,3 @@ def check_index(solr_url, file):
     solr = pysolr.Solr(solr_url, timeout=10)
     result = solr.search(q=f'id:"{file}-1"')
     return len(result) == 1
-
