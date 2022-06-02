@@ -2,12 +2,12 @@ import mysql.connector
 import MySQLdb.cursors
 
 
-sql_password = "khinkali"
+sql_password = "xxx"
 
 
 class SolrStats:
     def __init__(self):
-        self.db = MySQLdb.connect(host="localhost", user="root", password="khinkali")
+        self.db = MySQLdb.connect(host="localhost", user="xxx", password="xxx")
         self.index_cursor = self.db.cursor(cursorclass=MySQLdb.cursors.DictCursor)
         self.index_cursor.execute("CREATE DATABASE IF NOT EXISTS IndexedFiles")
 
